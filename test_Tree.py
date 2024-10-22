@@ -14,6 +14,8 @@ random.seed(42)
 X_train = np.load("Xtrain2_b.npy")
 y_train = np.load("Ytrain2_b.npy")
 X_test  = np.load("Xtest2_b.npy")
+X_train_a = np.load("Xtrain2_a.npy")
+print(f"tipo A é {X_train_a.shape}")
 
 ######  Convert to matrices  ######
 X_train = X_train.reshape(X_train.shape[0],48,48)
@@ -22,7 +24,7 @@ y_train = y_train.reshape(y_train.shape[0],48,48)
 ####################################################################
 ### define the validation and training sets  #######################
 ####################################################################
-percent_val = 30
+percent_val = 5
 n_val = int(percent_val * len(X_train) / 100)
 
 print("Use " + str(n_val) + " images for validation")
@@ -32,6 +34,9 @@ y_val = y_train[0:n_val]
 X_train = X_train[n_val:]
 y_train = y_train[n_val:]
 
+#n_cut = int(len(X_train))+1 
+#X_train = X_train[:n_cut]
+#y_train = y_train[:n_cut]
 
 #######  DESCRIPTION OF DATASET
 print()
@@ -54,7 +59,7 @@ def display_2_image(image1, image2):
 #turn 2D image into 3 1D vectors of features
 def generate_feature_stack(image):
     # determine features
-    blurred = filters.gaussian(image, sigma=1.25)  #blurr to remove high frequency noise
+    blurred = filters.gaussian(image, sigma=0.75)  #blurr to remove high frequency noise
     edges = filters.sobel(blurred)  #sobel finds edges
 
     # collect features in a stack
@@ -69,18 +74,6 @@ def generate_feature_stack(image):
     # return stack as numpy-array
     return np.asarray(feature_stack)
 
-image      = X_train[0]
-annotation = y_train[0]
-feature_stack = generate_feature_stack(image)
-
-# show feature images
-fig, axes = plt.subplots(1, 3, figsize=(10,10))
-# reshape(image.shape) reverts to matrix. We just need it for visualization.
-axes[0].imshow(feature_stack[0].reshape(image.shape), cmap=plt.cm.gray)
-axes[1].imshow(feature_stack[1].reshape(image.shape), cmap=plt.cm.gray)
-axes[2].imshow(feature_stack[2].reshape(image.shape), cmap=plt.cm.gray)
-plt.title("Example of features extracted")
-
 # reformat the data to match what scikit-learn expects
 def format_data(feature_stack, annotation):
     # feature stack  is [n_features][n_pixels]
@@ -89,20 +82,84 @@ def format_data(feature_stack, annotation):
 
     return X, y
 
-X, y = format_data(feature_stack, annotation)
+all_features = []
+all_annotations = []
 
-print("Input shape", X.shape)
-print("Annotation shape", y.shape)
+for index in range(len(X_train)):
+    feature_stack = generate_feature_stack(X_train[index])
+    if index == 0:
+        # show feature images
+        fig, axes = plt.subplots(1, 3, figsize=(10,10))
+        # reshape(image.shape) reverts to matrix. We just need it for visualization.
+        axes[0].imshow(feature_stack[0].reshape(X_train[0].shape), cmap=plt.cm.gray)
+        axes[1].imshow(feature_stack[1].reshape(X_train[0].shape), cmap=plt.cm.gray)
+        axes[2].imshow(feature_stack[2].reshape(X_train[0].shape), cmap=plt.cm.gray)
+        plt.title("Example of features extracted")
+
+    X , y = format_data(feature_stack , y_train[index])
+
+    all_features.append(X)
+    all_annotations.append(y)
+
+
+
+
+# Concatenate the feature arrays and annotations into a single array
+X_all = np.concatenate(all_features, axis=0)  # Combine all features from all images
+y_all = np.concatenate(all_annotations, axis=0)  # Combine all annotations
+print("Input shape", X_all.shape)
+print("Annotation shape", y_all.shape)
 
 ##########  Random Tree  ################
-classifier = RandomForestClassifier(max_depth=2, random_state=0)
-classifier.fit(X, y)
+classifier = RandomForestClassifier(max_depth=2, random_state=2)
+classifier.fit(X_all, y_all)
 
-##########  Ver resultados   ###############
-for i in range(13):
-    res = classifier.predict(generate_feature_stack(X_train[i]).T)
-    res = res.reshape(image.shape)
-    display_2_image(X_train[i],res )
+##########  Resultados na validação   ###############
+y_val_pred=[]
+for image_val in X_val:
+    res = classifier.predict(generate_feature_stack(image_val).T)
+    res = res.reshape(X_train[0].shape)
+    y_val_pred.append(res)
+    if(1):
+        display_2_image( image_val,res )
+
+TP = 0
+FP = 0
+TN = 0
+FN = 0
+for im in range(len(y_val)):
+    for px in range(y_val[im].shape[0]):
+        for py in range(y_val[im][px].shape[0]):
+            pred = y_val_pred[im][px][py]
+            val  = y_val[im][px][py]
+            if pred == 1 and val==1:
+                TP += 1
+            if pred == 1 and val==0:
+                FP += 1
+            if pred == 0 and val==0:
+                TN += 1
+            if pred == 0 and val==1:
+                FN += 1
+n_total_pixels = y_val.shape[0]*y_val.shape[1]*y_val.shape[2]
+confusion_matrix = np.array([[100*TP/n_total_pixels,100*FN/n_total_pixels ],[ 100*FP/n_total_pixels ,100*TN/n_total_pixels ]])
+print(confusion_matrix)
+
+precision = TP/( TP + FP )
+recall = TP/( TP + FN)
+accuracy = (TP + TN) / (TP+FN+FP+TN)
+true_neg_rate = TN/( TN + FP )
+bal_acc = 0.5*(recall + true_neg_rate)
+f1_score = 1/((1/recall)+(1/precision)) 
+
+print()
+print("------------------------------------------------")
+print("PERFORMANCE METRICS")
+print(f"Accuracy: {accuracy:.4f}")
+print(f"Precision: {precision:.4f} Recall: {recall:.4f}")
+print(f"F1: {f1_score:4f}")
+print(f"Balanced Accuracy: {bal_acc:.4f}")
+
+
 
 plt.show()
 
